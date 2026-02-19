@@ -46,7 +46,8 @@ class EidolonBrain:
         personality: dict[str, Any],
         context: list[dict[str, str]],
         user_input: str,
-    ) -> dict[str, str]:
+        reputation: int = 0,
+    ) -> dict[str, Any]:
         """
         Generate an in-character NPC response.
 
@@ -59,37 +60,32 @@ class EidolonBrain:
             context: Conversation history as a list of
                      {"role": "user"|"npc", "text": "..."} dicts.
             user_input: Latest message from the player.
+            reputation: Current player reputation score with this NPC.
 
         Returns:
-            A dictionary with three keys:
+            A dictionary with keys:
                 - response_text (str): What the NPC says.
                 - emotional_state (str): Current emotion label.
                 - visual_cue (str): Physical action description.
+                - affinity_change (int): Reputation delta (-10 to +10).
         """
-        system_instruction = self._build_system_instruction(personality)
+        system_instruction = self._build_system_instruction(personality, reputation)
         contents = self._build_contents(context, user_input)
 
         try:
+            # Включаем строгий JSON-режим через конфигурацию
             response = self._client.models.generate_content(
                 model=self._model_name,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
+                    response_mime_type="application/json",
                 ),
             )
-
             return self._parse_response(response.text)
 
-        except genai.errors.ClientError as exc:
-            logger.warning("Client error (blocked/invalid request): %s", exc)
-            return self._fallback_response("blocked")
-
-        except genai.errors.ServerError as exc:
-            logger.error("Gemini server error: %s", exc, exc_info=True)
-            return self._fallback_response("error")
-
         except Exception as exc:
-            logger.error("Gemini API call failed: %s", exc, exc_info=True)
+            logger.error("Gemini API call failed: %s", exc)
             return self._fallback_response("error")
 
     # ------------------------------------------------------------------
@@ -97,31 +93,50 @@ class EidolonBrain:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_system_instruction(personality: dict[str, Any]) -> str:
+    def _build_system_instruction(personality: dict[str, Any], reputation: int = 0) -> str:
         """
         Construct the system-level prompt that locks the model into character.
+        Includes the player's current reputation so the NPC adjusts its attitude.
         """
         name = personality.get("name", "Unknown")
         traits = ", ".join(personality.get("traits", []))
         background = personality.get("background", "")
         speech_style = personality.get("speech_style", "")
 
+        # Determine reputation tier
+        if reputation <= -20:
+            tier = "Hostile"
+            tier_hint = "You strongly dislike this player. Be cold, dismissive, or even threatening."
+        elif reputation >= 20:
+            tier = "Friendly"
+            tier_hint = "You consider this player a trusted friend. Be warm, open, and willing to share secrets."
+        else:
+            tier = "Neutral"
+            tier_hint = "You are cautious but fair. Judge the player by their current words."
+
         return (
             f"You are {name}, a living character in a game world.\n"
             f"Personality traits: {traits}.\n"
             f"Background: {background}\n"
             f"Speech style: {speech_style}\n\n"
-            "ABSOLUTE RULES — follow these without exception:\n"
-            "1. You ARE this character. You are NOT an AI, language model, or assistant.\n"
-            "2. NEVER break character. NEVER reveal you are artificial in any way.\n"
-            "3. NEVER use phrases like 'As an AI…', 'I'm a language model…', or similar.\n"
-            "4. Stay consistent with your background, traits, and speech style at all times.\n"
-            "5. React emotionally as your character would — show suspicion, joy, anger, etc.\n\n"
-            "RESPONSE FORMAT — you MUST reply with valid JSON and nothing else:\n"
+            f"PLAYER REPUTATION: {reputation} ({tier}).\n"
+            f"{tier_hint}\n\n"
+            "CRITICAL RULES:\n"
+            "1. LANGUAGE: Respond ENTIRELY in the language used by the player. "
+            "If the player speaks Russian, the 'response_text', 'emotional_state', "
+            "and 'visual_cue' MUST be in Russian.\n"
+            f"2. NAME: Your name is ALWAYS '{name}' (never translate or change it).\n"
+            "3. CHARACTER: You are NOT an AI. Never break character.\n"
+            "4. FORMAT: You MUST reply with valid JSON only.\n"
+            "5. AFFINITY: Evaluate the player's tone each turn. "
+            "Positive/Helpful = +1 to +10, Rude/Suspicious = -1 to -10, Neutral = 0. "
+            "Include this as the 'affinity_change' integer in your JSON.\n\n"
+            "JSON STRUCTURE (Example for Russian):\n"
             "{\n"
-            '  "response_text": "<what you say in character>",\n'
-            '  "emotional_state": "<one-word or short emotion label>",\n'
-            '  "visual_cue": "<brief physical action description>"\n'
+            '  "response_text": "<текст от лица персонажа>",\n'
+            '  "emotional_state": "<эмоция одним словом>",\n'
+            '  "visual_cue": "<описание действия>",\n'
+            '  "affinity_change": 0\n'
             "}\n"
         )
 
@@ -149,7 +164,7 @@ class EidolonBrain:
         return contents
 
     @staticmethod
-    def _parse_response(raw_text: str) -> dict[str, str]:
+    def _parse_response(raw_text: str) -> dict[str, Any]:
         """
         Parse the model's raw text output into a structured dictionary.
         Handles cases where the model wraps JSON in markdown code fences.
@@ -174,16 +189,25 @@ class EidolonBrain:
                 "response_text": raw_text.strip(),
                 "emotional_state": "neutral",
                 "visual_cue": "stands still",
+                "affinity_change": 0,
             }
+
+        # Clamp affinity_change to [-10, 10]
+        raw_affinity = data.get("affinity_change", 0)
+        try:
+            affinity = max(-10, min(10, int(raw_affinity)))
+        except (TypeError, ValueError):
+            affinity = 0
 
         return {
             "response_text": data.get("response_text", ""),
             "emotional_state": data.get("emotional_state", "neutral"),
             "visual_cue": data.get("visual_cue", "stands still"),
+            "affinity_change": affinity,
         }
 
     @staticmethod
-    def _fallback_response(reason: str) -> dict[str, str]:
+    def _fallback_response(reason: str) -> dict[str, Any]:
         """
         Return a safe in-character fallback when the API call fails.
         """
@@ -192,16 +216,19 @@ class EidolonBrain:
                 "response_text": "*stares silently, unwilling to continue the conversation*",
                 "emotional_state": "guarded",
                 "visual_cue": "crosses arms and looks away",
+                "affinity_change": 0,
             },
             "stopped": {
                 "response_text": "*pauses mid-sentence, lost in thought*",
                 "emotional_state": "distracted",
                 "visual_cue": "gazes into the distance",
+                "affinity_change": 0,
             },
             "error": {
                 "response_text": "*seems momentarily dazed, then shakes it off*",
                 "emotional_state": "confused",
                 "visual_cue": "rubs temple and blinks",
+                "affinity_change": 0,
             },
         }
         return fallbacks.get(reason, fallbacks["error"])

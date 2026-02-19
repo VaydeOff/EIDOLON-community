@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from eidolon_core.brain import EidolonBrain
+from eidolon_core.db_manager import DatabaseManager
 from eidolon_core.utils import log_event
-
 
 # --- Sample NPC personality ---
 BLACKSMITH = {
@@ -40,11 +40,19 @@ def main() -> None:
         print("[ERROR] GOOGLE_API_KEY not found. Create a .env file with your key.")
         sys.exit(1)
 
+    # Создаем объект для работы с базой данных (после load_dotenv!)
+    db = DatabaseManager()
+
     brain = EidolonBrain(api_key=api_key)
     log_event("EIDOLON Terminal Demo started.")
     print(f"\nYou approach {BLACKSMITH['name']}. Type 'quit' to leave.\n")
 
-    context: list[dict[str, str]] = []
+    context: list[dict[str, str]] = db.get_recent_history(BLACKSMITH["name"])
+    if context:
+        print("[EIDOLON] Memory retrieved from SQL Server.")
+
+    # Fetch the player's current reputation with this NPC
+    current_rep = db.get_reputation(BLACKSMITH["name"])
 
     while True:
         user_input = input("You: ").strip()
@@ -56,7 +64,19 @@ def main() -> None:
             personality=BLACKSMITH,
             context=context,
             user_input=user_input,
+            reputation=current_rep,
         )
+
+        # Log the interaction to MS SQL Server
+        db.save_interaction(BLACKSMITH["name"], user_input, result)
+
+        # --- Reputation update ---
+        affinity_change = result.get("affinity_change", 0)
+        if affinity_change != 0:
+            db.update_reputation(BLACKSMITH["name"], affinity_change)
+            current_rep += affinity_change
+            sign = "+" if affinity_change > 0 else ""
+            print(f"  [REPUTATION CHANGE: {sign}{affinity_change}  |  Total: {current_rep}]")
 
         # Display the structured response
         print(f"\n  [{result['emotional_state'].upper()}] {BLACKSMITH['name']}:")
