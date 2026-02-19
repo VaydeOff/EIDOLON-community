@@ -17,6 +17,8 @@ The **Community Version** provides the core architectural foundation for connect
 - **🎭 Structured Emotional Output**: Every response includes emotional states and visual cues for seamless animation integration
 - **🚀 LLM-Agnostic Core**: Built to leverage the power of Gemini 3 Pro, Gemini 2.5 Flash, and Claude 4.5
 - **🔗 Flexible Integration**: Ready for Unity (C#) and Web (JS/Next.js) environments
+- **💾 SQL Persistence**: Full integration with MS SQL Server. NPCs now remember every interaction, building a continuous narrative across sessions.
+- **🎭 Dynamic Reputation (Affinity)**: A built-in social capital system. Actions and dialogue choices directly influence NPC trust levels and future behavior.
 
 ---
 
@@ -28,6 +30,7 @@ The repository is organized to ensure modularity and scalability across differen
 EIDOLON-community/
 ├── eidolon_core/            # Core Python logic (The Brain)
 │   ├── brain.py             # LLM orchestration and logic
+│   ├── db_manager.py        # NEW: MS SQL Server integration & persistence layer
 │   ├── schemas.py           # Data structures and Pydantic models
 │   └── utils.py             # Utility functions and logging
 ├── examples/                # Quick-start implementation examples
@@ -57,11 +60,19 @@ pip install -r requirements.txt
 
 ### 2. Configuration
 
-Copy the example environment file and add your API key from [Google AI Studio](https://aistudio.google.com/):
+Copy the example environment file and configure your database and API:
 
 ```bash
 cp .env.example .env
-# Edit .env and add: GOOGLE_API_KEY=your_actual_key
+```
+
+Mandatory fields for v0.2:
+
+```env
+GOOGLE_API_KEY=your_key
+DB_SERVER=your_sql_instance       # e.g., localhost\SQLEXPRESS
+DB_NAME=EIDOLON-community
+DB_DRIVER={SQL Server}
 ```
 
 ### 3. Run the Demo
@@ -78,11 +89,12 @@ python examples/terminal_demo.py
 
 EIDOLON follows an **Open Core** strategy. While the Community Version provides the "Brain," the upcoming Pro Version will introduce advanced capabilities:
 
-- [x] **Core Python Brain**: Base library for AI-NPC communication
-- [x] **Unity SDK (C#)**: Native bridge for real-time Unity integration
-- [ ] **Long-term Memory**: Vector database (RAG) implementation for persistent NPC memories
-- [ ] **Visual Personality Designer**: A dashboard for creating and managing NPC personalities
-- [ ] **Voice & Real-time Interaction**: WebSocket support for low-latency voice control
+- [x] **Core Python Brain**: Engine-agnostic library for AI-NPC communication.
+- [x] **Long-term Memory (SQL)**: First-tier persistence for interaction history and reputation.
+- [🚧] **Unity SDK (C#)**: Native bridge for real-time Unity integration (In Progress).
+- [ ] **Vector Memory (RAG)**: Advanced semantic memory for Pro Version.
+- [ ] **Visual Personality Designer**: A dashboard for creating and managing NPC personalities.
+- [ ] **Voice & Real-time Interaction**: WebSocket support for low-latency voice control.
 
 ---
 
