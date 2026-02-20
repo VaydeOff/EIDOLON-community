@@ -124,7 +124,7 @@ EIDOLON follows an **Open Core** strategy. While the Community Version provides 
 
 ## 🎬 Visual Demo
 
-![EIDOLON Unity Prototype](images/unity_prototype.png)
+![EIDOLON Unity Prototype](images/Uniti_prototype.png)
 
 *Pilgrim's Interface: Gorm reacts to gold — reputation (22) highlighted in green, visual action descriptors are being streamed in real time.*
 
