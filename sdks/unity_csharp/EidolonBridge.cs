@@ -51,6 +51,7 @@ namespace Eidolon.SDK.Core
         [SerializeField] private string response_text = "";
         [SerializeField] private string emotional_state = "neutral";
         [SerializeField] private string visual_cue = "stands still";
+        public int reputation = 0;
 
         /// <summary>What the NPC says, fully in character.</summary>
         public string ResponseText => response_text;
@@ -60,6 +61,9 @@ namespace Eidolon.SDK.Core
 
         /// <summary>Brief physical action or body language description.</summary>
         public string VisualCue => visual_cue;
+
+        /// <summary>Current player reputation score with this NPC.</summary>
+        public int Reputation => reputation;
 
         /// <summary>
         /// Parses a JSON string into an <see cref="EidolonResponse"/>.
@@ -105,47 +109,15 @@ namespace Eidolon.SDK.Core
     }
 
     // ======================================================================
-    // GEMINI API PAYLOAD DTOs (internal)
+    // SERVER REQUEST DTO
     // ======================================================================
 
-    /// <summary>Request body for Gemini REST API <c>generateContent</c> endpoint.</summary>
-    [Serializable]
-    internal class GeminiRequest
+    /// <summary>Request body sent to the EIDOLON FastAPI bridge server.</summary>
+    [System.Serializable]
+    public class ChatRequestData
     {
-        public GeminiContent[] contents;
-        public GeminiSystemInstruction system_instruction;
-    }
-
-    [Serializable]
-    internal class GeminiSystemInstruction
-    {
-        public GeminiPart[] parts;
-    }
-
-    [Serializable]
-    internal class GeminiContent
-    {
-        public string role;
-        public GeminiPart[] parts;
-    }
-
-    [Serializable]
-    internal class GeminiPart
-    {
-        public string text;
-    }
-
-    /// <summary>Minimal response shape from Gemini <c>generateContent</c>.</summary>
-    [Serializable]
-    internal class GeminiResponse
-    {
-        public GeminiCandidate[] candidates;
-    }
-
-    [Serializable]
-    internal class GeminiCandidate
-    {
-        public GeminiContent content;
+        public string user_id;
+        public string message;
     }
 
     // ======================================================================
@@ -153,8 +125,9 @@ namespace Eidolon.SDK.Core
     // ======================================================================
 
     /// <summary>
-    /// Core bridge between Unity and the Google Gemini API.
+    /// Core bridge between Unity and the EIDOLON FastAPI server.
     /// Attach this MonoBehaviour to any GameObject to enable AI-NPC interactions.
+    /// The server handles LLM calls, memory, and reputation internally.
     /// </summary>
     [AddComponentMenu("EIDOLON/Eidolon Bridge")]
     public class EidolonBridge : MonoBehaviour
@@ -163,12 +136,12 @@ namespace Eidolon.SDK.Core
         // Inspector fields
         // ------------------------------------------------------------------
 
-        [Header("Gemini API Configuration")]
-        [Tooltip("Your Google AI Studio API key. WARNING: Move to a secure config (e.g. ScriptableObject or environment variable) before shipping.")]
-        [SerializeField] private string apiKey = "";
+        [Header("EIDOLON Server Configuration")]
+        [Tooltip("URL of the EIDOLON FastAPI bridge server.")]
+        [SerializeField] private string serverUrl = "http://127.0.0.1:8000/chat";
 
-        [Tooltip("Gemini model identifier. Defaults to gemini-2.5-flash.")]
-        [SerializeField] private string modelName = "gemini-2.5-flash";
+        [Tooltip("Player identifier sent with each request.")]
+        [SerializeField] private string userId = "Piligrim";
 
         [Header("NPC Identity")]
         [Tooltip("Personality configuration for the NPC powered by this bridge.")]
@@ -181,7 +154,7 @@ namespace Eidolon.SDK.Core
         // Public properties
         // ------------------------------------------------------------------
 
-        /// <summary>Event fired every time a valid response is received from the API.</summary>
+        /// <summary>Event fired every time a valid response is received from the server.</summary>
         public UnityEvent<EidolonResponse> OnResponseReceived => onResponseReceived;
 
         /// <summary>The current personality configuration. Can be swapped at runtime.</summary>
@@ -192,19 +165,13 @@ namespace Eidolon.SDK.Core
         }
 
         // ------------------------------------------------------------------
-        // Constants
-        // ------------------------------------------------------------------
-
-        private const string GeminiEndpointTemplate =
-            "https://generativelanguage.googleapis.com/v1beta/models/{0}:generateContent?key={1}";
-
-        // ------------------------------------------------------------------
         // Core public API
         // ------------------------------------------------------------------
 
         /// <summary>
-        /// Sends a player interaction to the Gemini API and returns a structured
-        /// in-character NPC response.
+        /// Sends a player interaction to the EIDOLON bridge server and returns
+        /// a structured in-character NPC response.
+        /// The server handles LLM calls, memory retrieval, and reputation updates.
         /// </summary>
         /// <param name="playerInput">The text the player typed or spoke.</param>
         /// <returns>
@@ -214,131 +181,35 @@ namespace Eidolon.SDK.Core
         /// <exception cref="ArgumentException">Thrown if <paramref name="playerInput"/> is null or empty.</exception>
         public async Task<EidolonResponse> SendInteraction(string playerInput)
         {
-            // --- Validation ---
-            if (string.IsNullOrWhiteSpace(playerInput))
-                throw new ArgumentException("Player input cannot be null or empty.", nameof(playerInput));
-
-            if (string.IsNullOrWhiteSpace(apiKey))
+            // 1. Формируем данные через Serializable класс
+            var requestBody = new ChatRequestData
             {
-                Debug.LogError("[EidolonBridge] API key is not set. Assign it in the Inspector or via code.");
-                return CreateFallbackResponse("error");
-            }
+                user_id = userId,
+                message = playerInput
+            };
+            string jsonPayload = JsonUtility.ToJson(requestBody);
 
-            // --- Check network reachability ---
-            if (Application.internetReachability == NetworkReachability.NotReachable)
-            {
-                Debug.LogWarning("[EidolonBridge] No internet connection detected.");
-                return CreateFallbackResponse("no_internet");
-            }
-
-            // --- Build request ---
-            string endpoint = string.Format(GeminiEndpointTemplate, modelName, apiKey);
-            string systemPrompt = BuildSystemInstruction(personality);
-            string requestBody = BuildRequestJson(systemPrompt, playerInput);
-
-            // --- Send request ---
-            EidolonResponse response;
+            Debug.Log("[EIDOLON] Sending: " + jsonPayload); // Увидим, что улетает
 
             try
             {
-                string rawResponse = await PostJsonAsync(endpoint, requestBody);
-                string npcText = ExtractTextFromGeminiResponse(rawResponse);
-                response = EidolonResponse.FromJson(npcText);
-            }
-            catch (EidolonApiException ex)
-            {
-                Debug.LogError($"[EidolonBridge] API error ({ex.StatusCode}): {ex.Message}");
-                response = CreateFallbackResponse("api_error");
+                string rawResponse = await PostJsonAsync(serverUrl, jsonPayload);
+                Debug.Log("[EIDOLON] Raw Response: " + rawResponse); // Увидим, что прилетает
+
+                var response = EidolonResponse.FromJson(rawResponse);
+                onResponseReceived?.Invoke(response);
+                return response;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[EidolonBridge] Unexpected error: {ex.Message}");
-                response = CreateFallbackResponse("error");
+                Debug.LogError($"[EIDOLON] Bridge Error: {ex.Message}");
+                return CreateFallbackResponse("error");
             }
-
-            // --- Notify listeners ---
-            onResponseReceived?.Invoke(response);
-            OnInteractionCompleted(playerInput, response);
-
-            return response;
         }
 
         // ------------------------------------------------------------------
-        // Database / logging hook
+        // HTTP helper
         // ------------------------------------------------------------------
-
-        /// <summary>
-        /// Called after every completed interaction. Override in a subclass to
-        /// persist interactions to SQL, local storage, analytics, etc.
-        /// </summary>
-        /// <param name="input">The original player input.</param>
-        /// <param name="response">The parsed NPC response.</param>
-        protected virtual void OnInteractionCompleted(string input, EidolonResponse response)
-        {
-            // Default: no-op. Subclass and override to add persistence.
-        }
-
-        // ------------------------------------------------------------------
-        // System prompt builder
-        // ------------------------------------------------------------------
-
-        /// <summary>
-        /// Constructs the system-level prompt that locks the LLM into character
-        /// and forces structured JSON output.
-        /// </summary>
-        private static string BuildSystemInstruction(PersonalityConfig config)
-        {
-            string traits = config.Traits != null && config.Traits.Length > 0
-                ? string.Join(", ", config.Traits)
-                : "none specified";
-
-            return new StringBuilder()
-                .AppendLine($"You are {config.NPCName}, a living character in a game world.")
-                .AppendLine($"Personality traits: {traits}.")
-                .AppendLine($"Background: {config.Background}")
-                .AppendLine($"Speech style: {config.SpeechStyle}")
-                .AppendLine()
-                .AppendLine("ABSOLUTE RULES — follow these without exception:")
-                .AppendLine("1. You ARE this character. You are NOT an AI, language model, or assistant.")
-                .AppendLine("2. NEVER break character. NEVER reveal you are artificial in any way.")
-                .AppendLine("3. NEVER use phrases like 'As an AI…', 'I'm a language model…', or similar.")
-                .AppendLine("4. Stay consistent with your background, traits, and speech style at all times.")
-                .AppendLine("5. React emotionally as your character would — show suspicion, joy, anger, etc.")
-                .AppendLine()
-                .AppendLine("RESPONSE FORMAT — you MUST reply with valid JSON and nothing else:")
-                .AppendLine("{")
-                .AppendLine("  \"response_text\": \"<what you say in character>\",")
-                .AppendLine("  \"emotional_state\": \"<one-word or short emotion label>\",")
-                .AppendLine("  \"visual_cue\": \"<brief physical action description>\"")
-                .AppendLine("}")
-                .ToString();
-        }
-
-        // ------------------------------------------------------------------
-        // Request / response helpers
-        // ------------------------------------------------------------------
-
-        /// <summary>Builds the full Gemini API request JSON body.</summary>
-        private static string BuildRequestJson(string systemPrompt, string userMessage)
-        {
-            var request = new GeminiRequest
-            {
-                system_instruction = new GeminiSystemInstruction
-                {
-                    parts = new[] { new GeminiPart { text = systemPrompt } }
-                },
-                contents = new[]
-                {
-                    new GeminiContent
-                    {
-                        role = "user",
-                        parts = new[] { new GeminiPart { text = userMessage } }
-                    }
-                }
-            };
-
-            return JsonUtility.ToJson(request);
-        }
 
         /// <summary>
         /// Sends a POST request with a JSON body and returns the raw response string.
@@ -381,34 +252,6 @@ namespace Eidolon.SDK.Core
             }
         }
 
-        /// <summary>
-        /// Extracts the text content from the first candidate of a Gemini
-        /// <c>generateContent</c> response.
-        /// </summary>
-        private static string ExtractTextFromGeminiResponse(string rawJson)
-        {
-            try
-            {
-                var geminiResponse = JsonUtility.FromJson<GeminiResponse>(rawJson);
-
-                if (geminiResponse?.candidates != null
-                    && geminiResponse.candidates.Length > 0
-                    && geminiResponse.candidates[0].content?.parts != null
-                    && geminiResponse.candidates[0].content.parts.Length > 0)
-                {
-                    return geminiResponse.candidates[0].content.parts[0].text;
-                }
-
-                Debug.LogWarning("[EidolonBridge] Gemini response contained no candidates.");
-                return rawJson;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[EidolonBridge] Failed to extract Gemini response: {ex.Message}");
-                return rawJson;
-            }
-        }
-
         // ------------------------------------------------------------------
         // Fallback responses
         // ------------------------------------------------------------------
@@ -439,6 +282,15 @@ namespace Eidolon.SDK.Core
                         "\"emotional_state\":\"confused\"," +
                         "\"visual_cue\":\"rubs temple and blinks\"}");
             }
+        }
+
+        // ------------------------------------------------------------------
+        // Unity lifecycle
+        // ------------------------------------------------------------------
+
+        private void Start()
+        {
+            Debug.Log("[EIDOLON] Здравствуй! Bridge is ready.");
         }
     }
 
