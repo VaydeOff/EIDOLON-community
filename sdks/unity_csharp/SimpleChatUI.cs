@@ -4,27 +4,37 @@ using Eidolon.SDK.Core;
 
 /// <summary>
 /// VAYDE Guard Standard UI Controller v0.3.0
-/// Управляет отображением речи, эмоций, действий и репутации NPC.
+/// Controls the display of NPC speech, emotions, actions, and reputation.
 /// </summary>
 public class SimpleChatUI : MonoBehaviour
 {
+    // Supported display languages
+    public enum UILanguage { English, Russian }
+
+    [Header("Localization")]
+    [Tooltip("Language used for UI labels and status messages.")]
+    public UILanguage language = UILanguage.English;
+
     [Header("Core References")]
     public EidolonBridge bridge;
     public InputField inputField;
     public Button sendButton;
 
     [Header("Display Areas")]
-    [Tooltip("Поле для основной речи Горма")]
+    [Tooltip("Main NPC speech output field.")]
     public Text gormTextArea;
 
-    [Tooltip("Поле для эмоции NPC (например: Подозрительно)")]
+    [Tooltip("NPC emotional state field (e.g. Suspicious).")]
     public Text emotionArea;
 
-    [Tooltip("Поле для физического действия NPC (например: скрещивает руки)")]
+    [Tooltip("NPC physical action field (e.g. crosses arms).")]
     public Text actionArea;
 
-    [Tooltip("Поле для отображения уровня репутации")]
+    [Tooltip("Player reputation score display field.")]
     public Text reputationArea;
+
+    // Localized strings
+    private string L(string en, string ru) => language == UILanguage.Russian ? ru : en;
 
     void Start()
     {
@@ -39,33 +49,36 @@ public class SimpleChatUI : MonoBehaviour
         string text = inputField.text;
         if (string.IsNullOrEmpty(text)) return;
 
-        // Визуальный фидбек: блокируем ввод и показываем статус
-        SetUIState(false, "Горм обдумывает ответ...");
+        // Lock input while waiting for the server response
+        SetUIState(false, L("Gorm is thinking...", "Горм обдумывает ответ..."));
 
         try
         {
             var res = await bridge.SendInteraction(text);
 
-            // 1. Основная речь NPC
+            // NPC speech
             if (gormTextArea != null)
                 gormTextArea.text = res.ResponseText;
 
-            // 2. Эмоция — отдельное поле
+            // Emotional state
             if (emotionArea != null)
                 emotionArea.text = res.EmotionalState;
 
-            // 3. Действие — отдельное поле
+            // Physical action
             if (actionArea != null)
                 actionArea.text = res.VisualCue;
 
-            // 4. Репутация с цветовой индикацией
+            // Reputation with color feedback
             UpdateReputationDisplay(res.Reputation);
         }
         catch (System.Exception ex)
         {
             Debug.LogError($"[UI ERROR] Failed to process interaction: {ex.Message}");
             if (gormTextArea != null)
-                gormTextArea.text = "<color=red>*Связь с Гормом прервалась*</color>";
+                gormTextArea.text = L(
+                    "<color=red>*Connection to Gorm lost*</color>",
+                    "<color=red>*Связь с Гормом прервалась*</color>"
+                );
         }
         finally
         {
@@ -87,13 +100,13 @@ public class SimpleChatUI : MonoBehaviour
     {
         if (reputationArea == null) return;
 
-        reputationArea.text = $"Репутация: {repValue}";
+        reputationArea.text = L($"Reputation: {repValue}", $"Репутация: {repValue}");
 
         if (repValue < 0)
-            reputationArea.color = Color.red;      // Враждебность
+            reputationArea.color = Color.red;       // Hostile
         else if (repValue > 10)
-            reputationArea.color = Color.green;     // Доверие
+            reputationArea.color = Color.green;     // Trusted
         else
-            reputationArea.color = Color.white;     // Нейтралитет
+            reputationArea.color = Color.white;     // Neutral
     }
 }

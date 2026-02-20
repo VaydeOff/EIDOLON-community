@@ -124,9 +124,13 @@ EIDOLON follows an **Open Core** strategy. While the Community Version provides 
 
 ## 🎬 Visual Demo
 
-![EIDOLON Unity Prototype](images/Uniti_prototype.png?v=1)
+**English UI**
+![EIDOLON Unity Prototype — English](images/Unity_prototype_en.png)
 
-*Pilgrim's Interface: Gorm reacts to gold — reputation (22) highlighted in green, visual action descriptors are being streamed in real time.*
+**Russian UI**
+![EIDOLON Unity Prototype — Russian](images/Unity_prototype_ru.png)
+
+*Pilgrim's Interface: Gorm reacts to gold — reputation (22) highlighted in green, visual action descriptors are streamed in real time. UI language is switchable via Inspector (English / Russian).*
 
 ---
 

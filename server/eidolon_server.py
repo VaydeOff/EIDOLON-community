@@ -1,8 +1,8 @@
 import os
 import sys
 
-# Добавляем корень проекта в sys.path, чтобы eidolon_core был доступен
-# независимо от того, из какой папки запускается скрипт
+# Add project root to sys.path so that eidolon_core is importable
+# regardless of the working directory the script is launched from.
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -14,19 +14,14 @@ from dotenv import load_dotenv
 from eidolon_core.brain import EidolonBrain
 from eidolon_core.db_manager import DatabaseManager
 
-# Загружаем .env из папки server/ (рядом с этим файлом)
+# Load .env from the server/ folder (next to this file)
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 app = FastAPI(title="EIDOLON Bridge Server")
 
-# 2. Инициализируем компоненты
 try:
-    # База данных сама подтянет настройки из .env
-    db = DatabaseManager() 
-    
-    # Мозгу нужен только API ключ, базу он найдет сам или через внутреннюю логику
+    db = DatabaseManager()
     brain = EidolonBrain(api_key=os.getenv("GOOGLE_API_KEY"))
-    
     print("[EIDOLON] Server components initialized. Gorm is ready.")
 except Exception as e:
     print(f"[CRITICAL ERROR] Failed to start engine: {e}")
@@ -36,7 +31,7 @@ class ChatRequest(BaseModel):
     user_id: str = "Piligrim"
     message: str
 
-# --- NPC personality (same as in terminal_demo.py) ---
+# NPC personality definition
 BLACKSMITH = {
     "name": "Gorm the Blacksmith",
     "traits": ["gruff", "honest", "proud of his craft", "distrustful of strangers"],
@@ -55,11 +50,10 @@ BLACKSMITH = {
 @app.post("/chat")
 async def chat_with_npc(request: ChatRequest):
     try:
-        # Подтягиваем историю и репутацию из БД
+        # Fetch conversation history and current reputation from the DB
         context = db.get_recent_history(BLACKSMITH["name"])
         reputation = db.get_reputation(BLACKSMITH["name"])
 
-        # brain.process_interaction(personality, context, user_input, reputation)
         result = brain.process_interaction(
             personality=BLACKSMITH,
             context=context,
@@ -67,10 +61,10 @@ async def chat_with_npc(request: ChatRequest):
             reputation=reputation,
         )
 
-        # Сохраняем взаимодействие в БД
+        # Persist the interaction
         db.save_interaction(BLACKSMITH["name"], request.message, result)
 
-        # Обновляем репутацию если изменилась
+        # Update reputation if Gorm's affinity changed this turn
         affinity_change = result.get("affinity_change", 0)
         if affinity_change != 0:
             db.update_reputation(BLACKSMITH["name"], affinity_change)

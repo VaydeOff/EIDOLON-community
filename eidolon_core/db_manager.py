@@ -55,9 +55,7 @@ class DatabaseManager:
         )
         logger.info("DatabaseManager ready (server=%s, db=%s).", self.server, self.database)
 
-    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------
 
     def save_interaction(
         self,
@@ -134,13 +132,12 @@ class DatabaseManager:
                 )
                 rows = cursor.fetchall()
 
-            # Build pairs (newest-first from the query) …
+            # Build pairs (newest-first from the query) then reverse to chronological order.
             history: list[dict[str, str]] = []
             for row in rows:
                 history.append({"role": "user", "text": row.PlayerMessage})
                 history.append({"role": "npc", "text": row.CharacterResponse})
 
-            # … then reverse so the oldest messages come first.
             history.reverse()
             logger.debug(
                 "Retrieved %d history pairs for '%s'.", len(rows), npc_name,
@@ -155,7 +152,7 @@ class DatabaseManager:
             return []
 
     def get_reputation(self, npc_name: str) -> int:
-        """Получить текущий уровень репутации NPC."""
+        """Return the current reputation score for the given NPC."""
         try:
             with pyodbc.connect(self._conn_str) as conn:
                 cursor = conn.cursor()
@@ -165,16 +162,16 @@ class DatabaseManager:
         except Exception:
             return 0
 
-    def update_reputation(self, npc_name: str, change: int):
-        """Изменить репутацию (например, +5 за вежливость или -10 за хамство)."""
+    def update_reputation(self, npc_name: str, change: int) -> None:
+        """Apply a reputation delta to the given NPC (positive or negative)."""
         try:
             with pyodbc.connect(self._conn_str) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    UPDATE NPCRelationships 
-                    SET ReputationScore = ReputationScore + ?, 
+                    UPDATE NPCRelationships
+                    SET ReputationScore = ReputationScore + ?,
                         LastInteraction = GETDATE()
                     WHERE NPCName = ?""", change, npc_name)
                 conn.commit()
         except Exception as e:
-            logger.error(f"Ошибка обновления репутации: {e}")
+            logger.error("Failed to update reputation: %s", e)
